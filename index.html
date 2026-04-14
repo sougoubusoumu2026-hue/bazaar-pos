@@ -1,0 +1,787 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<title>バザー会計</title>
+<script src="https://cdn.jsdelivr.net/npm/@zxing/library@0.19.1/umd/index.min.js"></script>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@400;500;700;900&family=DM+Mono:wght@400;500&display=swap');
+
+  :root {
+    --green: #1a4731;
+    --green-mid: #2d6a4f;
+    --green-light: #52b788;
+    --amber: #d4a017;
+    --amber-light: #f4c842;
+    --cream: #faf7f0;
+    --cream-dark: #ede8dc;
+    --red: #c0392b;
+    --text: #1a1a1a;
+    --text-muted: #6b7280;
+    --white: #ffffff;
+    --shadow: 0 4px 24px rgba(26,71,49,0.12);
+    --radius: 16px;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
+
+  body {
+    font-family: 'Noto Sans JP', sans-serif;
+    background: var(--cream);
+    color: var(--text);
+    min-height: 100vh;
+    overflow-x: hidden;
+  }
+
+  .header {
+    background: var(--green);
+    padding: 14px 16px 12px;
+    display: flex; align-items: center; justify-content: space-between;
+    position: sticky; top: 0; z-index: 100;
+    box-shadow: 0 2px 12px rgba(0,0,0,0.2);
+  }
+  .header-title { color: var(--white); font-size: 18px; font-weight: 900; letter-spacing: 0.04em; }
+  .header-sub { color: var(--green-light); font-size: 11px; margin-top: 1px; }
+  .daily-total-badge {
+    background: var(--amber); color: var(--green);
+    padding: 5px 12px; border-radius: 20px;
+    font-size: 13px; font-weight: 700; font-family: 'DM Mono', monospace;
+  }
+
+  .tabs { display: flex; background: var(--green); padding: 0 16px; gap: 2px; }
+  .tab {
+    flex: 1; padding: 10px 4px; text-align: center;
+    color: rgba(255,255,255,0.55); font-size: 13px; font-weight: 700;
+    border-bottom: 3px solid transparent; cursor: pointer; transition: all 0.2s; user-select: none;
+  }
+  .tab.active { color: var(--amber-light); border-bottom-color: var(--amber-light); }
+
+  .content { padding: 16px; max-width: 480px; margin: 0 auto; }
+
+  /* CAMERA */
+  .camera-modal {
+    display: none; position: fixed; inset: 0;
+    background: #000; z-index: 300; flex-direction: column;
+  }
+  .camera-modal.open { display: flex; }
+  .camera-header {
+    background: var(--green); padding: 16px;
+    display: flex; align-items: center; justify-content: space-between; flex-shrink: 0;
+  }
+  .camera-header-title { color: white; font-size: 16px; font-weight: 700; }
+  .camera-close {
+    background: rgba(255,255,255,0.15); border: none; color: white; font-size: 20px;
+    width: 38px; height: 38px; border-radius: 50%;
+    display: flex; align-items: center; justify-content: center; cursor: pointer;
+  }
+  .camera-viewport {
+    position: relative; flex: 1;
+    display: flex; align-items: center; justify-content: center;
+    overflow: hidden; background: #000;
+  }
+  #cameraVideo { width: 100%; height: 100%; object-fit: cover; }
+  #cameraCanvas { display: none; }
+
+  .finder-box {
+    position: absolute;
+    top: 50%; left: 50%;
+    transform: translate(-50%, -58%);
+    width: 230px; height: 230px;
+    pointer-events: none;
+  }
+  .finder-box::before, .finder-box::after,
+  .finder-corner-bl, .finder-corner-br {
+    content: ''; position: absolute;
+    width: 40px; height: 40px;
+    border-color: var(--amber-light); border-style: solid;
+  }
+  .finder-box::before { top: 0; left: 0; border-width: 4px 0 0 4px; border-radius: 4px 0 0 0; }
+  .finder-box::after  { top: 0; right: 0; border-width: 4px 4px 0 0; border-radius: 0 4px 0 0; }
+  .finder-corner-bl   { bottom: 0; left: 0; border-width: 0 0 4px 4px; border-radius: 0 0 0 4px; }
+  .finder-corner-br   { bottom: 0; right: 0; border-width: 0 4px 4px 0; border-radius: 0 0 4px 0; }
+
+  .shade { position: absolute; background: rgba(0,0,0,0.52); pointer-events: none; }
+
+  .scan-line {
+    position: absolute;
+    top: 50%; left: 50%;
+    transform: translate(-50%, -58%);
+    width: 230px; height: 3px;
+    background: linear-gradient(90deg, transparent, var(--amber-light), transparent);
+    animation: scanMove 2s ease-in-out infinite;
+    border-radius: 2px; pointer-events: none;
+  }
+  @keyframes scanMove {
+    0%   { margin-top: -115px; opacity: 0; }
+    10%  { opacity: 1; }
+    90%  { opacity: 1; }
+    100% { margin-top: 115px; opacity: 0; }
+  }
+  .scan-flash {
+    position: absolute; inset: 0;
+    background: rgba(244,200,66,0.45);
+    opacity: 0; pointer-events: none; transition: opacity 0.08s;
+  }
+  .scan-flash.active { opacity: 1; }
+
+  .camera-hint {
+    flex-shrink: 0; background: var(--green);
+    color: rgba(255,255,255,0.85);
+    text-align: center; padding: 18px 16px;
+    font-size: 14px; line-height: 1.7;
+  }
+  .camera-hint strong { color: var(--amber-light); }
+
+  /* QR RESULT */
+  .qr-result-popup {
+    display: none; position: fixed; bottom: 0; left: 0; right: 0;
+    background: var(--white); border-radius: 20px 20px 0 0;
+    padding: 24px 20px 36px; z-index: 400;
+    box-shadow: 0 -8px 32px rgba(0,0,0,0.25);
+    animation: slideUp 0.25s ease;
+  }
+  .qr-result-popup.open { display: block; }
+  @keyframes slideUp { from { transform: translateY(60px); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
+  .qr-result-price { font-size: 44px; font-weight: 900; font-family: 'DM Mono', monospace; color: var(--green); margin-bottom: 4px; }
+  .qr-result-desc { font-size: 13px; color: var(--text-muted); margin-bottom: 16px; }
+  .qr-result-name-input {
+    width: 100%; border: 2px solid var(--cream-dark); border-radius: 10px;
+    padding: 12px 14px; font-size: 16px; font-family: 'Noto Sans JP', sans-serif;
+    background: var(--cream); outline: none; margin-bottom: 14px;
+  }
+  .qr-result-name-input:focus { border-color: var(--green-light); background: #fff; }
+  .qr-result-btns { display: flex; gap: 10px; }
+  .qr-result-btns .btn { flex: 1; padding: 14px; font-size: 15px; }
+
+  /* SCAN BUTTON */
+  .scan-camera-btn {
+    width: 100%; padding: 20px; background: var(--green); color: white;
+    border: none; border-radius: var(--radius);
+    font-size: 18px; font-weight: 900; font-family: 'Noto Sans JP', sans-serif;
+    cursor: pointer; display: flex; align-items: center; justify-content: center; gap: 12px;
+    margin-bottom: 14px; box-shadow: var(--shadow); transition: all 0.15s;
+    letter-spacing: 0.02em;
+  }
+  .scan-camera-btn:active { background: var(--green-mid); transform: scale(0.98); }
+
+  /* MANUAL */
+  .scan-box {
+    background: var(--white); border-radius: var(--radius);
+    padding: 16px; box-shadow: var(--shadow); margin-bottom: 14px;
+  }
+  .manual-row { display: flex; gap: 8px; }
+  .manual-input {
+    flex: 1; border: 2px solid var(--cream-dark); border-radius: 10px;
+    padding: 10px 14px; font-size: 16px; font-family: 'DM Mono', monospace;
+    background: var(--cream); outline: none;
+  }
+  .manual-input:focus { border-color: var(--green-light); background: #fff; }
+
+  .btn {
+    border: none; border-radius: 10px; padding: 12px 16px;
+    font-size: 14px; font-weight: 700; font-family: 'Noto Sans JP', sans-serif;
+    cursor: pointer; transition: all 0.15s; user-select: none;
+  }
+  .btn:active { transform: scale(0.96); }
+  .btn-green { background: var(--green); color: #fff; }
+  .btn-green:active { background: var(--green-mid); }
+  .btn-red { background: #fef2f2; color: var(--red); border: 1.5px solid #fecaca; }
+  .btn-ghost { background: var(--cream-dark); color: var(--text-muted); }
+  .btn-amber { background: var(--amber); color: var(--green); }
+
+  .section-label {
+    font-size: 11px; font-weight: 700; color: var(--text-muted);
+    letter-spacing: 0.08em; margin-bottom: 8px; text-transform: uppercase;
+  }
+
+  /* CART */
+  .cart-box { background: var(--white); border-radius: var(--radius); padding: 16px; box-shadow: var(--shadow); margin-bottom: 14px; }
+  .cart-empty { text-align: center; padding: 32px 0; color: var(--text-muted); font-size: 14px; line-height: 1.8; }
+  .cart-item { display: flex; align-items: center; gap: 10px; padding: 11px 0; border-bottom: 1px solid var(--cream-dark); }
+  .cart-item:last-child { border-bottom: none; }
+  .cart-item-name { flex: 1; font-size: 14px; font-weight: 500; }
+  .cart-item-price { font-size: 15px; font-weight: 700; font-family: 'DM Mono', monospace; color: var(--green); min-width: 68px; text-align: right; }
+  .cart-delete { background: none; border: none; font-size: 18px; cursor: pointer; color: #d1d5db; padding: 4px; border-radius: 6px; }
+  .cart-delete:active { color: var(--red); }
+
+  /* PAYMENT */
+  .total-section { background: var(--green); border-radius: var(--radius); padding: 16px; margin-bottom: 14px; color: white; }
+  .total-row { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; }
+  .total-label { font-size: 14px; opacity: 0.8; }
+  .total-amount { font-size: 28px; font-weight: 900; font-family: 'DM Mono', monospace; color: var(--amber-light); }
+  .payment-row { display: flex; gap: 8px; align-items: center; margin-bottom: 10px; }
+  .payment-label { font-size: 13px; opacity: 0.8; min-width: 60px; }
+  .payment-input {
+    flex: 1; border: 2px solid rgba(255,255,255,0.2); border-radius: 10px;
+    padding: 10px 14px; font-size: 18px; font-weight: 700; font-family: 'DM Mono', monospace;
+    background: rgba(255,255,255,0.1); color: white; outline: none; text-align: right;
+  }
+  .payment-input:focus { border-color: var(--amber-light); }
+  .payment-input::placeholder { color: rgba(255,255,255,0.3); }
+  .change-display { background: rgba(255,255,255,0.08); border-radius: 10px; padding: 12px 14px; display: flex; justify-content: space-between; align-items: center; margin-bottom: 14px; }
+  .change-label { font-size: 13px; opacity: 0.8; }
+  .change-amount { font-size: 24px; font-weight: 900; font-family: 'DM Mono', monospace; }
+  .complete-btn {
+    width: 100%; padding: 16px; font-size: 17px; font-weight: 900; border-radius: 12px;
+    background: var(--amber); color: var(--green); border: none; cursor: pointer;
+    transition: all 0.15s; letter-spacing: 0.04em;
+  }
+  .complete-btn:active { background: var(--amber-light); transform: scale(0.98); }
+  .complete-btn:disabled { background: rgba(255,255,255,0.15); color: rgba(255,255,255,0.4); cursor: not-allowed; }
+
+  /* HISTORY */
+  .history-item { background: var(--white); border-radius: 12px; padding: 14px 16px; margin-bottom: 10px; box-shadow: 0 2px 8px rgba(26,71,49,0.07); }
+  .history-header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 8px; }
+  .history-num { font-size: 12px; color: var(--text-muted); font-weight: 500; }
+  .history-time { font-size: 11px; color: var(--text-muted); }
+  .history-total { font-size: 20px; font-weight: 900; color: var(--green); font-family: 'DM Mono', monospace; margin-bottom: 4px; }
+  .history-items-list { font-size: 12px; color: var(--text-muted); line-height: 1.6; }
+  .history-change { font-size: 12px; color: var(--amber); font-weight: 700; margin-top: 4px; }
+
+  /* SUMMARY */
+  .summary-card { background: var(--green); color: white; border-radius: var(--radius); padding: 20px; margin-bottom: 14px; box-shadow: var(--shadow); }
+  .summary-title { font-size: 12px; opacity: 0.7; margin-bottom: 6px; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; }
+  .summary-amount { font-size: 38px; font-weight: 900; font-family: 'DM Mono', monospace; color: var(--amber-light); }
+  .summary-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 14px; }
+  .summary-stat { background: rgba(255,255,255,0.08); border-radius: 10px; padding: 12px; }
+  .summary-stat-label { font-size: 11px; opacity: 0.7; margin-bottom: 4px; }
+  .summary-stat-value { font-size: 20px; font-weight: 700; font-family: 'DM Mono', monospace; }
+  .reset-btn { width: 100%; padding: 14px; border-radius: 10px; background: #fef2f2; color: var(--red); border: 1.5px solid #fecaca; font-size: 14px; font-weight: 700; font-family: 'Noto Sans JP', sans-serif; cursor: pointer; margin-top: 10px; }
+
+  /* SETTINGS */
+  .settings-block { background: var(--white); border-radius: var(--radius); padding: 16px; box-shadow: var(--shadow); margin-bottom: 14px; }
+  code { background: var(--cream-dark); padding: 2px 8px; border-radius: 4px; font-family: 'DM Mono', monospace; font-size: 13px; }
+
+  .toast {
+    position: fixed; bottom: 30px; left: 50%; transform: translateX(-50%);
+    background: var(--green); color: white; padding: 12px 24px; border-radius: 24px;
+    font-size: 14px; font-weight: 700; z-index: 999; opacity: 0; transition: opacity 0.3s;
+    pointer-events: none; white-space: nowrap; max-width: 90vw; text-align: center;
+  }
+  .toast.show { opacity: 1; }
+  /* CAMERA */
+.camera-modal { display:none; position:fixed; inset:0; background:#000; z-index:300; flex-direction:column; }
+.camera-modal.open { display:flex; }
+.camera-header { background:var(--green); padding:16px; display:flex; align-items:center; justify-content:space-between; flex-shrink:0; }
+.camera-header-title { color:white; font-size:16px; font-weight:700; }
+.camera-close { background:rgba(255,255,255,0.15); border:none; color:white; font-size:20px; width:38px; height:38px; border-radius:50%; display:flex; align-items:center; justify-content:center; cursor:pointer; }
+.camera-viewport { position:relative; flex:1; display:flex; align-items:center; justify-content:center; overflow:hidden; background:#000; }
+#cameraVideo { width:100%; height:100%; object-fit:cover; }
+.finder-box { position:absolute; top:50%; left:50%; transform:translate(-50%,-58%); width:230px; height:230px; pointer-events:none; }
+.finder-box::before,.finder-box::after,.finder-corner-bl,.finder-corner-br { content:''; position:absolute; width:40px; height:40px; border-color:var(--amber-light); border-style:solid; }
+.finder-box::before { top:0; left:0; border-width:4px 0 0 4px; border-radius:4px 0 0 0; }
+.finder-box::after  { top:0; right:0; border-width:4px 4px 0 0; border-radius:0 4px 0 0; }
+.finder-corner-bl   { bottom:0; left:0; border-width:0 0 4px 4px; border-radius:0 0 0 4px; }
+.finder-corner-br   { bottom:0; right:0; border-width:0 4px 4px 0; border-radius:0 0 4px 0; }
+.scan-line { position:absolute; top:50%; left:50%; transform:translate(-50%,-58%); width:230px; height:3px; background:linear-gradient(90deg,transparent,var(--amber-light),transparent); animation:scanMove 2s ease-in-out infinite; border-radius:2px; pointer-events:none; }
+@keyframes scanMove { 0%{margin-top:-115px;opacity:0} 10%{opacity:1} 90%{opacity:1} 100%{margin-top:115px;opacity:0} }
+.scan-flash { position:absolute; inset:0; background:rgba(244,200,66,0.45); opacity:0; pointer-events:none; transition:opacity 0.08s; }
+.scan-flash.active { opacity:1; }
+.camera-hint { flex-shrink:0; background:var(--green); color:rgba(255,255,255,0.85); text-align:center; padding:18px 16px; font-size:14px; line-height:1.7; }
+.camera-hint strong { color:var(--amber-light); }
+
+.badge { display: inline-block; background: var(--amber); color: var(--green); font-size: 10px; font-weight: 900; padding: 2px 7px; border-radius: 10px; margin-left: 6px; }
+</style>
+</head>
+<body>
+
+<canvas id="cameraCanvas" style="display:none"></canvas></canvas>
+
+
+<!-- CAMERA MODAL -->
+<div class="camera-modal" id="cameraModal">
+  <div class="camera-header">
+    <div class="camera-header-title">📷 QRコードをスキャン</div>
+    <button class="camera-close" onclick="closeCamera()">✕</button>
+  </div>
+  <div class="camera-viewport">
+    <video id="cameraVideo" autoplay playsinline muted></video>
+    <div class="finder-box">
+      <div class="finder-corner-bl"></div>
+      <div class="finder-corner-br"></div>
+    </div>
+    <div class="scan-line"></div>
+    <div class="scan-flash" id="scanFlash"></div>
+  </div>
+  <div class="camera-hint">
+    価格シールのQRコードを枠内に合わせてください<br>
+    <strong>自動で読み取ります</strong>
+  </div>
+</div>
+
+<!-- HEADER -->
+<div class="header">
+  <div>
+    <div class="header-title">🛍 バザー会計</div>
+    <div class="header-sub">開智学園総合部保護者会</div>
+  </div>
+  <div class="daily-total-badge" id="headerTotal">¥0</div>
+</div>
+
+<div class="tabs">
+  <div class="tab active" onclick="showTab('register')" id="tab-register">レジ</div>
+  <div class="tab" onclick="showTab('history')" id="tab-history">履歴 <span class="badge" id="historyBadge">0</span></div>
+  <div class="tab" onclick="showTab('summary')" id="tab-summary">集計</div>
+  <div class="tab" onclick="showTab('settings')" id="tab-settings">設定</div>
+</div>
+
+<!-- REGISTER -->
+<div id="page-register" class="content">
+  <button class="scan-camera-btn" onclick="openCamera()">
+    <span style="font-size:24px">📷</span> カメラでQRコードを読む
+  </button>
+  <div class="scan-box">
+    <div class="section-label">手動で追加</div>
+    <div class="manual-row">
+      <input class="manual-input" id="manualName" type="text" placeholder="商品名（任意）">
+      <input class="manual-input" id="manualPrice" type="number" inputmode="numeric" placeholder="金額" style="max-width:90px">
+      <button class="btn btn-green" onclick="addManual()">＋</button>
+    </div>
+
+  </div>
+
+  <div class="cart-box">
+    <div class="section-label">カート</div>
+    <div id="cartList">
+      <div class="cart-empty">📷 QRコードを読み取るか<br>手動で商品を追加してください</div>
+    </div>
+  </div>
+
+  <div class="total-section">
+    <div class="total-row">
+      <span class="total-label" id="totalLabel">合計金額</span>
+      <span class="total-amount" id="totalAmount">¥0</span>
+    </div>
+    <div id="halfPriceRow" style="margin-bottom:12px">
+      <button id="halfBtn" onclick="toggleHalf()" style="width:100%;padding:12px;border-radius:10px;border:2px solid rgba(255,255,255,0.3);background:transparent;color:rgba(255,255,255,0.8);font-size:14px;font-weight:700;font-family:Noto Sans JP,sans-serif;cursor:pointer;transition:all 0.2s;">
+        👩‍🏫 教員価格（半額）にする
+      </button>
+    </div>
+    <!-- 客層ボタン -->
+    <div style="margin-bottom:12px">
+      <div style="font-size:11px;opacity:0.7;margin-bottom:6px;letter-spacing:0.06em;text-transform:uppercase;font-weight:700;">お客様の種別</div>
+      <div style="display:flex;gap:8px">
+        <button id="typeBtn-parent" onclick="setCustomerType('parent')" style="flex:1;padding:10px 4px;border-radius:10px;border:2px solid rgba(255,255,255,0.3);background:transparent;color:rgba(255,255,255,0.8);font-size:13px;font-weight:700;font-family:Noto Sans JP,sans-serif;cursor:pointer;transition:all 0.2s;">👨‍👩‍👧 保護者</button>
+        <button id="typeBtn-community" onclick="setCustomerType('community')" style="flex:1;padding:10px 4px;border-radius:10px;border:2px solid rgba(255,255,255,0.3);background:transparent;color:rgba(255,255,255,0.8);font-size:13px;font-weight:700;font-family:Noto Sans JP,sans-serif;cursor:pointer;transition:all 0.2s;">🏘️ 地域の方</button>
+      </div>
+    </div>
+
+    <div class="payment-row">
+      <span class="payment-label">お預かり</span>
+      <input class="payment-input" id="paymentInput" type="number" inputmode="numeric" placeholder="0" oninput="updateChange()">
+    </div>
+    <div class="change-display">
+      <span class="change-label">お釣り</span>
+      <span class="change-amount" id="changeAmount">—</span>
+    </div>
+    <button class="complete-btn" id="completeBtn" onclick="completeSale()" disabled>会計完了　✓</button>
+  </div>
+</div>
+
+<!-- HISTORY -->
+<div id="page-history" class="content" style="display:none">
+  <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px">
+    <div style="font-size:15px;font-weight:700;color:var(--green)">取引履歴</div>
+    <button class="btn btn-ghost" onclick="exportCSV()" style="font-size:12px;padding:8px 12px">CSVで保存</button>
+  </div>
+  <div id="historyList">
+    <div style="text-align:center;padding:40px 0;color:var(--text-muted);font-size:14px">まだ会計がありません</div>
+  </div>
+</div>
+
+<!-- SUMMARY -->
+<div id="page-summary" class="content" style="display:none">
+  <div class="summary-card">
+    <div class="summary-title">本日の売上合計</div>
+    <div class="summary-amount" id="summaryTotal">¥0</div>
+    <div class="summary-grid">
+      <div class="summary-stat">
+        <div class="summary-stat-label">取引件数</div>
+        <div class="summary-stat-value" id="summaryCount">0 件</div>
+      </div>
+      <div class="summary-stat">
+        <div class="summary-stat-label">平均単価</div>
+        <div class="summary-stat-value" id="summaryAvg">¥0</div>
+      </div>
+    </div>
+  </div>
+  <div style="background:var(--white);border-radius:var(--radius);padding:16px;box-shadow:var(--shadow);margin-bottom:14px">
+    <div class="section-label">商品別売上</div>
+    <div id="itemSummary" style="font-size:14px;color:var(--text-muted);padding-top:4px">—</div>
+  </div>
+  <div style="background:var(--white);border-radius:var(--radius);padding:16px;box-shadow:var(--shadow);margin-bottom:14px">
+    <div class="section-label">客層別売上</div>
+    <div id="typeSummary" style="font-size:14px;color:var(--text-muted);padding-top:4px">—</div>
+  </div>
+
+  <button class="reset-btn" onclick="resetDay()">⚠️ 本日分データをリセット</button>
+</div>
+
+<!-- SETTINGS -->
+<div id="page-settings" class="content" style="display:none">
+  <div class="settings-block">
+    <div class="section-label">QRコードの形式</div>
+    <div style="font-size:13px;color:var(--text-muted);line-height:2.2">
+      <div>📌 <code>3000</code> → ¥3,000（数字のみ・推奨）</div>
+      <div>📌 <code>制服上:3000</code> → 商品名付き</div>
+      <div>📌 <code>¥3000</code> → ¥マーク付きも対応</div>
+    </div>
+  </div>
+  <div class="settings-block">
+    <div class="section-label">データ管理</div>
+    <button class="btn btn-ghost" onclick="exportCSV()" style="width:100%;padding:13px;font-size:14px;margin-bottom:10px">📥 売上CSVをダウンロード</button>
+    <button class="reset-btn" style="margin-top:0" onclick="resetDay()">⚠️ 本日分データをリセット</button>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+// ===== STATE =====
+let cart = [];
+let sales = JSON.parse(localStorage.getItem('bazaar_sales') || '[]');
+let isHalfPrice = false;
+let customerType = 'parent'; // 'parent' | 'community' | 'teacher'
+
+function setCustomerType(type) {
+  customerType = type;
+  const types = ['parent', 'community'];
+  types.forEach(t => {
+    const btn = document.getElementById('typeBtn-' + t);
+    if (!btn) return;
+    if (t === type) {
+      btn.style.background = '#52b788';
+      btn.style.color = '#1a4731';
+      btn.style.border = '2px solid #52b788';
+    } else {
+      btn.style.background = 'transparent';
+      btn.style.color = 'rgba(255,255,255,0.8)';
+      btn.style.border = '2px solid rgba(255,255,255,0.3)';
+    }
+  });
+}
+
+function save() {
+  localStorage.setItem('bazaar_sales', JSON.stringify(sales));
+}
+
+// ===== TABS =====
+function showTab(name) {
+  ['register','history','summary','settings'].forEach(t => {
+    document.getElementById('page-' + t).style.display = t === name ? 'block' : 'none';
+    document.getElementById('tab-' + t).classList.toggle('active', t === name);
+  });
+  if (name === 'history') renderHistory();
+  if (name === 'summary') renderSummary();
+}
+
+
+
+// ===== CAMERA (ZXing) =====
+let codeReader = null;
+let scanning = false;
+
+async function openCamera() {
+  document.getElementById('cameraModal').classList.add('open');
+  if (scanning) return;
+  scanning = true;
+
+  try {
+    const hints = new Map();
+    hints.set(ZXing.DecodeHintType.TRY_HARDER, true);
+    codeReader = new ZXing.BrowserQRCodeReader(hints);
+    const videoEl = document.getElementById('cameraVideo');
+
+    // Get back camera using constraints directly
+    const stream = await navigator.mediaDevices.getUserMedia({
+      video: { facingMode: { ideal: 'environment' }, width: { ideal: 1280 }, height: { ideal: 720 } }
+    });
+    videoEl.srcObject = stream;
+    videoEl._stream = stream;
+    await videoEl.play();
+
+    const tick = () => {
+      if (!scanning) return;
+      try {
+        const canvas = document.createElement('canvas');
+        canvas.width = videoEl.videoWidth;
+        canvas.height = videoEl.videoHeight;
+        if (canvas.width === 0) { requestAnimationFrame(tick); return; }
+        const ctx = canvas.getContext('2d');
+        ctx.drawImage(videoEl, 0, 0);
+        const luminanceSource = new ZXing.HTMLCanvasElementLuminanceSource(canvas);
+        const binaryBitmap = new ZXing.BinaryBitmap(new ZXing.HybridBinarizer(luminanceSource));
+        const result = new ZXing.QRCodeReader().decode(binaryBitmap);
+        if (result && scanning) {
+          scanning = false;
+          const flash = document.getElementById('scanFlash');
+          flash.classList.add('active');
+          setTimeout(() => flash.classList.remove('active'), 150);
+          closeCamera();
+          handleQrResult(result.getText());
+        }
+      } catch(e) {
+        // NotFoundException is normal when no QR in frame
+      }
+      if (scanning) requestAnimationFrame(tick);
+    };
+    requestAnimationFrame(tick);
+
+  } catch(e) {
+    showToast('カメラエラー: ' + e.message);
+    closeCamera();
+  }
+}
+
+function closeCamera() {
+  document.getElementById('cameraModal').classList.remove('open');
+  scanning = false;
+  const videoEl = document.getElementById('cameraVideo');
+  if (videoEl._stream) {
+    videoEl._stream.getTracks().forEach(t => t.stop());
+    videoEl._stream = null;
+    videoEl.srcObject = null;
+  }
+  codeReader = null;
+}
+
+function handleQrResult(raw) {
+  const s = raw.trim();
+  let price = 0, name = '';
+
+  if (/^.+[:：]/.test(s)) {
+    const sep = s.includes(':') ? ':' : '：';
+    const idx = s.lastIndexOf(sep);
+    name = s.slice(0, idx).trim();
+    price = parseInt(s.slice(idx+1).replace(/[^\d]/g, '')) || 0;
+  } else {
+    price = parseInt(s.replace(/[,，]/g, '').replace(/[^\d]/g, '')) || 0;
+  }
+
+  if (!price || price <= 0) {
+    showToast('価格情報が読み取れませんでした');
+    return;
+  }
+
+  const nameVal = name || `¥${price.toLocaleString()}の商品`;
+  addItem(nameVal, price);
+}
+
+// ===== CART =====
+function toggleHalf() {
+  isHalfPrice = !isHalfPrice;
+  const btn = document.getElementById('halfBtn');
+  if (isHalfPrice) {
+    btn.style.background = '#d4a017';
+    btn.style.color = '#1a4731';
+    btn.style.border = '2px solid #d4a017';
+    btn.textContent = '👩‍🏫 教員価格（半額）ON ✓ — タップで解除';
+  } else {
+    btn.style.background = 'transparent';
+    btn.style.color = 'rgba(255,255,255,0.8)';
+    btn.style.border = '2px solid rgba(255,255,255,0.3)';
+    btn.textContent = '👩‍🏫 教員価格（半額）にする';
+  }
+  document.getElementById('paymentInput').value = '';
+  renderCart();
+}
+
+function addItem(name, price) {
+  cart.push({ name, price });
+  renderCart();
+  showToast(`${name}　¥${price.toLocaleString()} を追加`);
+}
+
+function removeItem(idx) { cart.splice(idx, 1); renderCart(); }
+
+function renderCart() {
+  const subtotal = cart.reduce((s, i) => s + i.price, 0);
+  const total = isHalfPrice ? Math.floor(subtotal / 2) : subtotal;
+  const list = document.getElementById('cartList');
+  list.innerHTML = cart.length === 0
+    ? '<div class="cart-empty">📷 QRコードを読み取るか<br>手動で商品を追加してください</div>'
+    : cart.map((item, i) => `
+        <div class="cart-item">
+          <div class="cart-item-name">${item.name}</div>
+          <div class="cart-item-price">¥${item.price.toLocaleString()}</div>
+          <button class="cart-delete" onclick="removeItem(${i})">✕</button>
+        </div>`).join('');
+  const label = document.getElementById('totalLabel');
+  if (isHalfPrice && cart.length > 0) {
+    label.innerHTML = '合計 <span style="font-size:11px;opacity:0.7">（定価 ¥' + subtotal.toLocaleString() + ' → 半額）</span>';
+  } else {
+    label.textContent = '合計金額';
+  }
+  document.getElementById('totalAmount').textContent = '¥' + total.toLocaleString();
+  updateChange();
+  document.getElementById('completeBtn').disabled = cart.length === 0;
+}
+
+// ===== MANUAL =====
+function addManual() {
+  const name = document.getElementById('manualName').value.trim() || '商品';
+  const price = parseInt(document.getElementById('manualPrice').value) || 0;
+  if (price <= 0) { showToast('金額を入力してください'); return; }
+  addItem(name, price);
+  document.getElementById('manualName').value = '';
+  document.getElementById('manualPrice').value = '';
+}
+
+// ===== PAYMENT =====
+function updateChange() {
+  const subtotal = cart.reduce((s, i) => s + i.price, 0);
+  const total = isHalfPrice ? Math.floor(subtotal / 2) : subtotal;
+  const paid = parseInt(document.getElementById('paymentInput').value) || 0;
+  const el = document.getElementById('changeAmount');
+  if (!document.getElementById('paymentInput').value) {
+    el.textContent = '—'; el.style.color = 'rgba(255,255,255,0.5)';
+  } else if (paid >= total) {
+    el.textContent = '¥' + (paid - total).toLocaleString(); el.style.color = '#f4c842';
+  } else {
+    el.textContent = '不足 ¥' + (total - paid).toLocaleString(); el.style.color = '#fca5a5';
+  }
+}
+
+// ===== COMPLETE =====
+function completeSale() {
+  const subtotal = cart.reduce((s, i) => s + i.price, 0);
+  const total = isHalfPrice ? Math.floor(subtotal / 2) : subtotal;
+  const paid = parseInt(document.getElementById('paymentInput').value) || 0;
+  if (paid < total) { showToast('お預かり金額が不足しています'); return; }
+  const finalType = isHalfPrice ? 'teacher' : customerType;
+  sales.push({
+    id: Date.now(),
+    time: new Date().toLocaleTimeString('ja-JP', {hour:'2-digit', minute:'2-digit'}),
+    items: [...cart], total, paid, change: paid - total,
+    isHalfPrice, subtotal,
+    customerType: finalType
+  });
+  save();
+  cart = [];
+  isHalfPrice = false;
+  const halfBtn = document.getElementById('halfBtn');
+  halfBtn.style.background = 'transparent';
+  halfBtn.style.color = 'rgba(255,255,255,0.8)';
+  halfBtn.style.border = '2px solid rgba(255,255,255,0.3)';
+  halfBtn.textContent = '👩‍🏫 教員価格（半額）にする';
+  customerType = 'parent';
+  setCustomerType('parent');
+  document.getElementById('paymentInput').value = '';
+  renderCart();
+  updateHeader();
+  showToast(`✅ 会計完了！　お釣り ¥${(paid - total).toLocaleString()}`);
+}
+
+function updateHeader() {
+  const total = sales.reduce((s, t) => s + t.total, 0);
+  document.getElementById('headerTotal').textContent = '¥' + total.toLocaleString();
+  document.getElementById('historyBadge').textContent = sales.length;
+}
+
+// ===== HISTORY =====
+function renderHistory() {
+  const list = document.getElementById('historyList');
+  if (!sales.length) {
+    list.innerHTML = '<div style="text-align:center;padding:40px 0;color:var(--text-muted);font-size:14px">まだ会計がありません</div>';
+    return;
+  }
+  list.innerHTML = [...sales].reverse().map((s, i) => `
+    <div class="history-item">
+      <div class="history-header">
+        <div class="history-num">#${sales.length - i} 件目</div>
+        <div class="history-time">${s.time}</div>
+      </div>
+      <div class="history-total">¥${s.total.toLocaleString()}</div>
+      <div class="history-items-list">${s.items.map(it => `${it.name} ¥${it.price}`).join(' · ')}</div>
+      <div class="history-change">お釣り ¥${s.change.toLocaleString()}${s.isHalfPrice ? ' <span style="color:#52b788">👩‍🏫 教員半額</span>' : ''}</div>
+      <div style="font-size:11px;color:var(--text-muted);margin-top:2px">${
+        s.customerType === 'community' ? '🏘️ 地域の方' :
+        s.customerType === 'teacher' ? '👩‍🏫 教員' : '👨‍👩‍👧 保護者'
+      }</div>
+    </div>`).join('');
+}
+
+// ===== SUMMARY =====
+function renderSummary() {
+  const total = sales.reduce((s, t) => s + t.total, 0);
+  const count = sales.length;
+  document.getElementById('summaryTotal').textContent = '¥' + total.toLocaleString();
+  document.getElementById('summaryCount').textContent = count + ' 件';
+  document.getElementById('summaryAvg').textContent = count ? '¥' + Math.round(total/count).toLocaleString() : '¥0';
+  const itemMap = {};
+  sales.forEach(s => s.items.forEach(it => {
+    if (!itemMap[it.name]) itemMap[it.name] = { count: 0, total: 0 };
+    itemMap[it.name].count++; itemMap[it.name].total += it.price;
+  }));
+  const sorted = Object.entries(itemMap).sort((a, b) => b[1].total - a[1].total);
+  document.getElementById('itemSummary').innerHTML = sorted.length
+    ? sorted.map(([name, d]) => `
+        <div style="display:flex;justify-content:space-between;padding:7px 0;border-bottom:1px solid var(--cream-dark)">
+          <span>${name} <span style="color:var(--text-muted);font-size:12px">× ${d.count}</span></span>
+          <span style="font-weight:700;font-family:DM Mono,monospace;color:var(--green)">¥${d.total.toLocaleString()}</span>
+        </div>`).join('')
+    : '<div style="color:var(--text-muted)">データなし</div>';
+
+  // 客層別集計
+  const typeLabels = { parent: '👨‍👩‍👧 保護者', community: '🏘️ 地域の方', teacher: '👩‍🏫 教員' };
+  const typeMap = { parent: {count:0, total:0}, community: {count:0, total:0}, teacher: {count:0, total:0} };
+  sales.forEach(s => {
+    const t = s.customerType || 'parent';
+    if (typeMap[t]) { typeMap[t].count++; typeMap[t].total += s.total; }
+  });
+  document.getElementById('typeSummary').innerHTML = Object.entries(typeMap).map(([type, d]) => `
+    <div style="display:flex;justify-content:space-between;align-items:center;padding:9px 0;border-bottom:1px solid var(--cream-dark)">
+      <span style="font-weight:500">${typeLabels[type]}</span>
+      <span style="text-align:right">
+        <span style="font-family:DM Mono,monospace;font-weight:700;color:var(--green)">¥${d.total.toLocaleString()}</span>
+        <span style="color:var(--text-muted);font-size:12px;margin-left:6px">${d.count}件</span>
+      </span>
+    </div>`).join('');
+}
+
+// ===== CSV =====
+function exportCSV() {
+  if (!sales.length) { showToast('データがありません'); return; }
+  const typeLabels = { parent: '保護者', community: '地域の方', teacher: '教員' };
+  let csv = '取引番号,時刻,客層,合計,お預かり,お釣り,商品\n';
+  sales.forEach((s, i) => {
+    const typeName = typeLabels[s.customerType || 'parent'];
+    csv += `${i+1},${s.time},${typeName},${s.total},${s.paid},${s.change},"${s.items.map(it => it.name + '¥' + it.price).join(' / ')}"\n`;
+  });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob(['\uFEFF' + csv], {type: 'text/csv;charset=utf-8;'}));
+  a.download = `バザー売上_${new Date().toLocaleDateString('ja-JP')}.csv`;
+  a.click();
+}
+
+// ===== RESET =====
+function resetDay() {
+  if (confirm('本日分の売上データをすべてリセットしますか？\nこの操作は取り消せません。')) {
+    sales = []; save(); updateHeader(); renderSummary(); showToast('リセットしました');
+  }
+}
+
+// ===== TOAST =====
+function showToast(msg) {
+  const t = document.getElementById('toast');
+  t.textContent = msg; t.classList.add('show');
+  setTimeout(() => t.classList.remove('show'), 2400);
+}
+
+// ===== INIT =====
+renderCart();
+updateHeader();
+</script>
+
+<script>
+if ('serviceWorker' in navigator) {
+  navigator.serviceWorker.register('/bazaar-pos/sw.js')
+    .then(() => console.log('SW registered'))
+    .catch(e => console.log('SW error:', e));
+}
+</script>
+</body>
+</html>
