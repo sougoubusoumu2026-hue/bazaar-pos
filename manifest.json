@@ -1,0 +1,20 @@
+{
+  "name": "バザー会計",
+  "short_name": "バザー会計",
+  "start_url": "/bazaar-pos/",
+  "display": "standalone",
+  "background_color": "#b8e4c9",
+  "theme_color": "#1a4731",
+  "icons": [
+    {
+      "src": "/bazaar-pos/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png"
+    },
+    {
+      "src": "/bazaar-pos/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png"
+    }
+  ]
+}
